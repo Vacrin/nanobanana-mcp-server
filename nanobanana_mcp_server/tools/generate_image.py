@@ -125,6 +125,15 @@ def register_generate_image_tool(server: FastMCP):
                 "Default: uses RETURN_FULL_IMAGE env var, or false if not set."
             ),
         ] = None,
+        style_profile: Annotated[
+            str | None,
+            Field(
+                description="Style profile label (e.g., 'pixel-forest-iso'). "
+                "Loads predefined style, system instruction, reference images, "
+                "and post-processing settings. Explicit parameters override profile defaults.",
+                max_length=64,
+            ),
+        ] = None,
         _ctx: Context | None = None,
     ) -> ToolResult:
         """
@@ -161,6 +170,53 @@ def register_generate_image_tool(server: FastMCP):
 
             # Validate output_path if provided
             validate_output_path(output_path)
+
+            # Apply style profile if specified
+            _active_profile = None
+            if style_profile:
+                from ..services import get_style_profile_service
+
+                profile_service = get_style_profile_service()
+                _active_profile = profile_service.load_profile(style_profile)
+                logger.info(f"Loaded style profile: {style_profile}")
+
+                # Merge defaults (explicit params take precedence)
+                if system_instruction is None:
+                    system_instruction = _active_profile.system_instruction
+                if negative_prompt is None:
+                    negative_prompt = _active_profile.negative_prompt
+                if model_tier == "auto" and _active_profile.defaults.model_tier:
+                    model_tier = _active_profile.defaults.model_tier
+                if aspect_ratio is None and _active_profile.defaults.aspect_ratio:
+                    aspect_ratio = _active_profile.defaults.aspect_ratio
+                if resolution == "high" and _active_profile.defaults.resolution:
+                    resolution = _active_profile.defaults.resolution
+                if (
+                    _active_profile.defaults.enable_grounding is not None
+                    and enable_grounding is True  # only override if user kept default
+                ):
+                    enable_grounding = _active_profile.defaults.enable_grounding
+                if thinking_level is None and _active_profile.defaults.thinking_level:
+                    thinking_level = _active_profile.defaults.thinking_level
+
+                # Append style_description to prompt
+                if _active_profile.style_description:
+                    prompt = f"{prompt}\n\nStyle: {_active_profile.style_description}"
+
+                # Inject reference images into remaining slots
+                existing_count = len(input_image_paths) if input_image_paths else 0
+                if existing_count < MAX_INPUT_IMAGES:
+                    ref_paths = profile_service.get_reference_image_paths(
+                        _active_profile, max_count=MAX_INPUT_IMAGES - existing_count
+                    )
+                    if ref_paths:
+                        if input_image_paths is None:
+                            input_image_paths = ref_paths
+                        else:
+                            input_image_paths.extend(ref_paths)
+                        logger.info(
+                            f"Injected {len(ref_paths)} reference image(s) from profile"
+                        )
 
             # Auto-detect mode based on inputs
             detected_mode = mode
@@ -345,6 +401,51 @@ def register_generate_image_tool(server: FastMCP):
                         os.getenv("RETURN_FULL_IMAGE", "false").strip().lower()
                         in ("true", "1", "yes")
                     )
+
+            # Post-processing: resize images if style profile requires it
+            if (
+                _active_profile
+                and _active_profile.post_processing.resize.enabled
+                and metadata
+            ):
+                from ..utils.image_utils import resize_image_exact
+
+                resize_cfg = _active_profile.post_processing.resize
+                output_fmt = _active_profile.post_processing.format.upper()
+                logger.info(
+                    f"Post-processing: resizing to {resize_cfg.width}x{resize_cfg.height} "
+                    f"({resize_cfg.resample})"
+                )
+
+                for meta in metadata:
+                    if not meta or not isinstance(meta, dict):
+                        continue
+                    full_path = meta.get("full_path")
+                    if not full_path or not os.path.isfile(full_path):
+                        continue
+                    try:
+                        with open(full_path, "rb") as f:
+                            original_bytes = f.read()
+                        resized_bytes = resize_image_exact(
+                            original_bytes,
+                            resize_cfg.width,
+                            resize_cfg.height,
+                            resize_cfg.resample,
+                            output_fmt,
+                        )
+                        with open(full_path, "wb") as f:
+                            f.write(resized_bytes)
+                        meta["width"] = resize_cfg.width
+                        meta["height"] = resize_cfg.height
+                        meta["size_bytes"] = len(resized_bytes)
+                        meta["post_processed"] = True
+                        meta["post_processing"] = {
+                            "resize": f"{resize_cfg.width}x{resize_cfg.height}",
+                            "resample": resize_cfg.resample,
+                            "format": output_fmt,
+                        }
+                    except Exception as e:
+                        logger.warning(f"Post-processing failed for {full_path}: {e}")
 
             # Create response with file paths and thumbnails
             if metadata:
@@ -532,6 +633,11 @@ def register_generate_image_tool(server: FastMCP):
                     sum(m.get("size_bytes", 0) for m in metadata if m and isinstance(m, dict))
                     / (1024 * 1024),
                     2,
+                ),
+                "style_profile": style_profile,
+                "post_processed": bool(
+                    _active_profile
+                    and _active_profile.post_processing.resize.enabled
                 ),
             }
 

@@ -25,6 +25,12 @@ TEMPLATE_CATEGORIES = {
     "artistic": "Creative and artistic rendering",
 }
 
+# Style profile constants
+PROFILE_FILENAME = "profile.json"
+PROFILE_REFERENCES_DIR = "references"
+SUPPORTED_RESAMPLE_METHODS = ["nearest", "lanczos", "bilinear", "bicubic"]
+SUPPORTED_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
 # Error messages
 ERROR_MESSAGES = {
     "missing_api_key": "GEMINI_API_KEY or GOOGLE_API_KEY must be set in environment",

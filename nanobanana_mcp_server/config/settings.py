@@ -220,6 +220,27 @@ class ModelSelectionConfig:
 
 
 @dataclass
+class StyleProfileConfig:
+    """Configuration for the style profile system."""
+
+    profiles_dir: str = ""
+
+    @classmethod
+    def from_env(cls) -> "StyleProfileConfig":
+        """Load style profile config from environment."""
+        load_dotenv()
+
+        profiles_dir = os.getenv("NANOBANANA_PROFILES_DIR", "").strip()
+        if not profiles_dir:
+            profiles_dir = str(Path.home() / "nanobanana-profiles")
+
+        profiles_path = Path(profiles_dir).resolve()
+        profiles_path.mkdir(parents=True, exist_ok=True)
+
+        return cls(profiles_dir=str(profiles_path))
+
+
+@dataclass
 class GeminiConfig:
     """Legacy Gemini API configuration (backward compatibility)."""
 

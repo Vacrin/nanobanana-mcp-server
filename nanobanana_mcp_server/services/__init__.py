@@ -10,6 +10,7 @@ from ..config.settings import (
     NanoBanana2Config,
     ProImageConfig,
     ServerConfig,
+    StyleProfileConfig,
 )
 from .enhanced_image_service import EnhancedImageService
 from .file_image_service import FileImageService
@@ -21,6 +22,7 @@ from .image_storage_service import ImageStorageService
 from .maintenance_service import MaintenanceService
 from .model_selector import ModelSelector
 from .pro_image_service import ProImageService
+from .style_profile_service import StyleProfileService
 
 # Global service instances (initialized by the server)
 _gemini_client: GeminiClient | None = None
@@ -41,6 +43,7 @@ _pro_image_service: ProImageService | None = None
 _nb2_gemini_client: GeminiClient | None = None
 _nb2_image_service: ProImageService | None = None
 _model_selector: ModelSelector | None = None
+_style_profile_service: StyleProfileService | None = None
 
 
 def initialize_services(server_config: ServerConfig, gemini_config: GeminiConfig):
@@ -60,6 +63,7 @@ def initialize_services(server_config: ServerConfig, gemini_config: GeminiConfig
         _nb2_gemini_client, \
         _nb2_image_service, \
         _model_selector, \
+        _style_profile_service, \
         _server_config
 
     _server_config = server_config
@@ -105,6 +109,10 @@ def initialize_services(server_config: ServerConfig, gemini_config: GeminiConfig
         _nb2_image_service,  # NB2 service
         selection_config,
     )
+
+    # Initialize style profile service
+    style_profile_config = StyleProfileConfig.from_env()
+    _style_profile_service = StyleProfileService(style_profile_config.profiles_dir)
 
 
 def get_image_service() -> FileImageService:
@@ -189,6 +197,13 @@ def get_model_selector() -> ModelSelector:
     if _model_selector is None:
         raise RuntimeError("Services not initialized. Call initialize_services() first.")
     return _model_selector
+
+
+def get_style_profile_service() -> StyleProfileService:
+    """Get the style profile service instance."""
+    if _style_profile_service is None:
+        raise RuntimeError("Services not initialized. Call initialize_services() first.")
+    return _style_profile_service
 
 
 def get_server_config() -> ServerConfig:
