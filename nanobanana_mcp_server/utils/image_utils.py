@@ -168,6 +168,44 @@ def create_thumbnail_base64(image_b64: str, size: Tuple[int, int] = (256, 256)) 
         raise ImageProcessingError(f"Thumbnail creation failed: {e}")
 
 
+def resize_image_exact(
+    image_bytes: bytes,
+    width: int,
+    height: int,
+    resample: str = "nearest",
+    output_format: str = "PNG",
+) -> bytes:
+    """Resize image to exact pixel dimensions.
+
+    Unlike create_thumbnail which preserves aspect ratio, this forces exact
+    dimensions — required for game asset tiles and sprite sheets.
+
+    Args:
+        image_bytes: Raw image bytes.
+        width: Target width in pixels.
+        height: Target height in pixels.
+        resample: Resampling method (nearest, lanczos, bilinear, bicubic).
+        output_format: Output image format (PNG, JPEG, WEBP).
+
+    Returns:
+        Resized image as bytes.
+    """
+    resample_methods = {
+        "nearest": Image.Resampling.NEAREST,
+        "lanczos": Image.Resampling.LANCZOS,
+        "bilinear": Image.Resampling.BILINEAR,
+        "bicubic": Image.Resampling.BICUBIC,
+    }
+    method = resample_methods.get(resample.lower(), Image.Resampling.NEAREST)
+
+    with Image.open(BytesIO(image_bytes)) as img:
+        resized = img.resize((width, height), method)
+        output = BytesIO()
+        resized.save(output, format=output_format.upper())
+        output.seek(0)
+        return output.read()
+
+
 def estimate_compression_ratio(original_b64: str, compressed_b64: str) -> float:
     """Estimate compression ratio between original and compressed images."""
     try:
