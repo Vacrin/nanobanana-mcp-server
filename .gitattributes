@@ -1,0 +1,19 @@
+# Ensure consistent LF line endings across platforms.
+# Without this, Windows-side editors (including those used through WSL2)
+# can silently convert files to CRLF and produce massive whitespace-only
+# diffs against the LF-normalised repository.
+* text=auto eol=lf
+
+# Common binary types — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.woff binary
+*.woff2 binary
