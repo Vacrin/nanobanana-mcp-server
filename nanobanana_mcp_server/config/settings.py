@@ -129,7 +129,7 @@ class BaseModelConfig:
     max_images_per_request: int = 4
     max_inline_image_size: int = 20 * 1024 * 1024  # 20MB
     default_image_format: str = "png"
-    request_timeout: int = 60  # seconds
+    request_timeout: int = 300  # seconds
 
 
 @dataclass
@@ -157,7 +157,7 @@ class ProImageConfig(BaseModelConfig):
     supports_media_resolution: bool = True
     supports_extreme_aspect_ratios: bool = False
     enable_search_grounding: bool = True
-    request_timeout: int = 90  # Pro model needs more time for 4K
+    request_timeout: int = 400  # Pro model needs more time for 4K
 
 
 @dataclass
@@ -165,7 +165,7 @@ class NanoBanana2Config(ProImageConfig):
     """Gemini 3.1 Flash Image configuration (Flash speed + Pro quality)."""
 
     model_name: str = "gemini-3.1-flash-image-preview"
-    request_timeout: int = 60  # Flash-speed model
+    request_timeout: int = 300  # Flash-speed model
     supports_thinking: bool = True  # Supports Minimal/High/Dynamic thinking
     supports_extreme_aspect_ratios: bool = True  # 4:1, 1:4, 8:1, 1:8
 
@@ -250,4 +250,4 @@ class GeminiConfig:
     max_images_per_request: int = 4
     max_inline_image_size: int = 20 * 1024 * 1024  # 20MB
     default_image_format: str = "png"
-    request_timeout: int = 60  # seconds - increased for image generation
+    request_timeout: int = 300  # seconds - increased for image generation

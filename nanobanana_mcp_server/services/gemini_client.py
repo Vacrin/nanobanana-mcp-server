@@ -1,5 +1,6 @@
 import base64
 import logging
+import threading
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -35,30 +36,33 @@ class GeminiClient:
     def client(self) -> genai.Client:
         """Lazy initialization of Gemini client."""
         if self._client is None:
-            # Build http_options for custom base URL if configured
-            http_options = None
+            # Always set an SDK-level request timeout. Without this, httpx
+            # receives timeout=None from google-genai and any request that
+            # stalls (5xx storms, dropped connections that aren't closed)
+            # hangs the MCP tool indefinitely. SDK expects milliseconds.
+            http_options: dict[str, Any] = {
+                "timeout": int(self.gemini_config.request_timeout * 1000),
+            }
             if self.config.gemini_base_url:
-                http_options = {"base_url": self.config.gemini_base_url}
+                http_options["base_url"] = self.config.gemini_base_url
                 safe_url = self._get_safe_base_url_for_log(self.config.gemini_base_url)
                 self.logger.info(f"Using custom base URL: {safe_url}")
 
             if self.config.auth_method == AuthMethod.API_KEY:
                 if not self.config.gemini_api_key:
                     raise AuthenticationError("API key is required for API_KEY auth method")
-                client_kwargs = {"api_key": self.config.gemini_api_key}
-                if http_options:
-                    client_kwargs["http_options"] = http_options
-                self._client = genai.Client(**client_kwargs)
+                self._client = genai.Client(
+                    api_key=self.config.gemini_api_key,
+                    http_options=http_options,
+                )
                 self._log_auth_method("API Key (Developer API)")
             else:  # VERTEX_AI
-                client_kwargs = {
-                    "vertexai": True,
-                    "project": self.config.gcp_project_id,
-                    "location": self.config.gcp_region,
-                }
-                if http_options:
-                    client_kwargs["http_options"] = http_options
-                self._client = genai.Client(**client_kwargs)
+                self._client = genai.Client(
+                    vertexai=True,
+                    project=self.config.gcp_project_id,
+                    location=self.config.gcp_region,
+                    http_options=http_options,
+                )
                 self._log_auth_method(f"ADC (Vertex AI - {self.config.gcp_region})")
         return self._client
 
@@ -76,6 +80,46 @@ class GeminiClient:
     def _log_auth_method(self, method: str):
         """Log the authentication method in use."""
         self.logger.info(f"Authentication method: {method}")
+
+    def _call_with_timeout(self, func, *args, **kwargs):
+        """Run a synchronous SDK call with a hard outer wall-clock timeout.
+
+        The SDK's http_options.timeout covers the underlying httpx request, but
+        a hang can still escape it (auth/credential refresh, DNS, or sockets
+        that don't honour cancellation). This wrapper guarantees the MCP tool
+        returns within request_timeout + grace, surfacing a clear error to the
+        calling agent instead of leaving it waiting.
+
+        Runs in a daemon thread so a wedged SDK call cannot block process
+        exit (ThreadPoolExecutor's workers are non-daemon and would hang
+        the interpreter's atexit cleanup forever).
+        """
+        grace_seconds = 10
+        outer_timeout = self.gemini_config.request_timeout + grace_seconds
+
+        result_box: list[Any] = []
+        error_box: list[BaseException] = []
+
+        def runner() -> None:
+            try:
+                result_box.append(func(*args, **kwargs))
+            except BaseException as exc:  # propagate everything back to caller
+                error_box.append(exc)
+
+        thread = threading.Thread(target=runner, name="gemini-api-call", daemon=True)
+        thread.start()
+        thread.join(timeout=outer_timeout)
+
+        if thread.is_alive():
+            raise TimeoutError(
+                f"Gemini API call exceeded {outer_timeout}s "
+                f"(SDK request_timeout={self.gemini_config.request_timeout}s "
+                f"+ {grace_seconds}s grace). The service may be unavailable; "
+                "the underlying request may continue in the background."
+            )
+        if error_box:
+            raise error_box[0]
+        return result_box[0] if result_box else None
 
     def validate_auth(self) -> bool:
         """Validate authentication credentials (optional).
@@ -139,9 +183,6 @@ class GeminiClient:
             API response object
         """
         try:
-            # Remove unsupported request_options parameter
-            kwargs.pop("request_options", None)
-
             # Check for config conflict
             config_obj = kwargs.pop("config", None)
             if config_obj is not None:
@@ -200,7 +241,7 @@ class GeminiClient:
                 f"config={api_kwargs.get('config')}"
             )
 
-            response = self.client.models.generate_content(**api_kwargs)
+            response = self._call_with_timeout(self.client.models.generate_content, **api_kwargs)
             return response
 
         except Exception as e:
